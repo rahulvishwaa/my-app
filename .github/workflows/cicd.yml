@@ -114,7 +114,7 @@ jobs:
           echo "Polling Tower job ID: $JOB_ID"
 
           for i in $(seq 1 30); do
-            STATUS=$(curl -s \
+            STATUS=$(curl -s -k \
               -H "Authorization: Bearer ${{ secrets.TOWER_TOKEN }}" \
               "${{ secrets.TOWER_URL }}/api/v2/jobs/$JOB_ID/" \
               | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
