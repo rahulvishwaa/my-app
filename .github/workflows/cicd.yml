@@ -80,7 +80,7 @@ jobs:
   # ─────────────────────────────────────────────
   deploy:
     name: Deploy via Ansible Tower
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: build-and-push
     if: github.ref == 'refs/heads/main'
 
