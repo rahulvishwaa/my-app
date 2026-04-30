@@ -7,6 +7,7 @@
     app_name: "my-app"
     namespace: "default"
     docker_user: "rahulvishwa"
+    kubeconfig_path: "/var/lib/awx/.kube/config"
 
   tasks:
     - name: Show which image tag is being deployed
@@ -15,6 +16,7 @@
 
     - name: Update the deployment with new image
       kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig_path }}"
         state: present
         definition:
           apiVersion: apps/v1
@@ -32,11 +34,15 @@
     - name: Wait for rollout to finish
       command: "kubectl rollout status deployment/{{ app_name }} -n {{ namespace }} --timeout=120s"
       changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
 
     - name: Verify running pods
       command: "kubectl get pods -n {{ namespace }} -l app={{ app_name }}"
       register: pod_status
       changed_when: false
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
 
     - name: Print pod status
       debug:
