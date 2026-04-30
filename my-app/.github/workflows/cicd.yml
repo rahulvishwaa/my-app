@@ -1,0 +1,136 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]    # runs tests on PRs but doesn't deploy
+
+env:
+  IMAGE_NAME: rahulvishwa/my-app
+
+jobs:
+
+  # ─────────────────────────────────────────────
+  # JOB 1: Test
+  # ─────────────────────────────────────────────
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+  # ─────────────────────────────────────────────
+  # JOB 2: Build and push Docker image
+  # ─────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'   # only deploy on main branch, not PRs
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate image tag from git SHA
+        id: meta
+        run: echo "tag=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Print image tag
+        run: echo "Pushed image with tag ${{ steps.meta.outputs.tag }}"
+
+  # ─────────────────────────────────────────────
+  # JOB 3: Trigger Ansible Tower to deploy
+  # ─────────────────────────────────────────────
+  deploy:
+    name: Deploy via Ansible Tower
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Trigger Ansible Tower Job
+        id: trigger
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer ${{ secrets.TOWER_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"extra_vars\": {\"image_tag\": \"${{ needs.build-and-push.outputs.image_tag }}\"}}" \
+            "${{ secrets.TOWER_URL }}/api/v2/job_templates/${{ secrets.TOWER_JOB_TEMPLATE_ID }}/launch/")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+
+          JOB_ID=$(echo $BODY | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "job_id=$JOB_ID" >> $GITHUB_OUTPUT
+
+          if [ "$HTTP_CODE" != "201" ]; then
+            echo "Failed to trigger Tower job"
+            exit 1
+          fi
+
+      - name: Poll Tower until job completes
+        run: |
+          JOB_ID=${{ steps.trigger.outputs.job_id }}
+          echo "Polling Tower job ID: $JOB_ID"
+
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s \
+              -H "Authorization: Bearer ${{ secrets.TOWER_TOKEN }}" \
+              "${{ secrets.TOWER_URL }}/api/v2/jobs/$JOB_ID/" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+
+            echo "Attempt $i — Job status: $STATUS"
+
+            if [ "$STATUS" == "successful" ]; then
+              echo "Deployment successful!"
+              exit 0
+            elif [ "$STATUS" == "failed" ] || [ "$STATUS" == "error" ] || [ "$STATUS" == "canceled" ]; then
+              echo "Deployment FAILED with status: $STATUS"
+              exit 1
+            fi
+
+            sleep 15
+          done
+
+          echo "Timed out waiting for Tower job"
+          exit 1

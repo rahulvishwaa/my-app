@@ -1,0 +1,43 @@
+---
+- name: Deploy my-app to Kubernetes
+  hosts: localhost
+  gather_facts: false
+  vars:
+    image_tag: "latest"
+    app_name: "my-app"
+    namespace: "default"
+    docker_user: "rahulvishwa"
+
+  tasks:
+    - name: Show which image tag is being deployed
+      debug:
+        msg: "Deploying image: {{ docker_user }}/{{ app_name }}:{{ image_tag }}"
+
+    - name: Update the deployment with new image
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ app_name }}"
+            namespace: "{{ namespace }}"
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: "{{ app_name }}"
+                    image: "{{ docker_user }}/{{ app_name }}:{{ image_tag }}"
+
+    - name: Wait for rollout to finish
+      command: "kubectl rollout status deployment/{{ app_name }} -n {{ namespace }} --timeout=120s"
+      changed_when: false
+
+    - name: Verify running pods
+      command: "kubectl get pods -n {{ namespace }} -l app={{ app_name }}"
+      register: pod_status
+      changed_when: false
+
+    - name: Print pod status
+      debug:
+        msg: "{{ pod_status.stdout_lines }}"
