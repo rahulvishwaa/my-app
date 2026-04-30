@@ -1,4 +1,3 @@
----
 - name: Deploy my-app to Kubernetes
   hosts: localhost
   gather_facts: false
@@ -9,29 +8,72 @@
     docker_user: "rahulvishwa"
 
   tasks:
-    - name: Show which image tag is being deployed
-      debug:
-        msg: "Deploying image: {{ docker_user }}/{{ app_name }}:{{ image_tag }}"
+    - name: Ensure kubeconfig_data is provided
+      assert:
+        that:
+          - kubeconfig_data is defined
+          - kubeconfig_data | length > 0
+        fail_msg: "kubeconfig_data variable is missing or empty."
 
-    - name: Update deployment image
-      command: >
-        kubectl set image deployment/{{ app_name }}
-        {{ app_name }}={{ docker_user }}/{{ app_name }}:{{ image_tag }}
-        -n {{ k8s_namespace }}
-      changed_when: true
+    - name: Create temporary kubeconfig file
+      tempfile:
+        state: file
+        suffix: .config
+      register: kube_tmp
 
-    - name: Wait for rollout to finish
-      command: >
-        kubectl rollout status deployment/{{ app_name }}
-        -n {{ k8s_namespace }}
-        --timeout=120s
-      changed_when: false
+    - name: Write kubeconfig to temp file
+      copy:
+        content: "{{ kubeconfig_data | b64decode }}"
+        dest: "{{ kube_tmp.path }}"
+        mode: "0600"
 
-    - name: Verify running pods
-      command: "kubectl get pods -n {{ k8s_namespace }} -l app={{ app_name }}"
-      register: pod_status
-      changed_when: false
+    - block:
+        - name: Validate kubeconfig can reach cluster
+          command: kubectl --kubeconfig "{{ kube_tmp.path }}" cluster-info
+          register: cluster_info
+          failed_when: cluster_info.rc != 0
+          changed_when: false
 
-    - name: Print pod status
-      debug:
-        msg: "{{ pod_status.stdout_lines }}"
+        - name: Update deployment image using k8s module
+          community.kubernetes.k8s:
+            api_version: apps/v1
+            kind: Deployment
+            name: "{{ app_name }}"
+            namespace: "{{ k8s_namespace }}"
+            kubeconfig: "{{ kube_tmp.path }}"
+            merge_type: strategic-merge
+            definition:
+              spec:
+                template:
+                  spec:
+                    containers:
+                      - name: "{{ app_name }}"
+                        image: "{{ docker_user }}/{{ app_name }}:{{ image_tag }}"
+
+        - name: Wait for rollout to finish
+          command: >
+            kubectl rollout status deployment/{{ app_name }}
+            -n {{ k8s_namespace }}
+            --timeout=120s
+          environment:
+            KUBECONFIG: "{{ kube_tmp.path }}"
+          register: rollout
+          failed_when: rollout.rc != 0
+          changed_when: false
+
+        - name: Verify running pods
+          command: kubectl get pods -n {{ k8s_namespace }} -l app={{ app_name }} -o wide
+          environment:
+            KUBECONFIG: "{{ kube_tmp.path }}"
+          register: pod_status
+          changed_when: false
+
+        - name: Print pod status
+          debug:
+            msg: "{{ pod_status.stdout_lines }}"
+
+      always:
+        - name: Cleanup kubeconfig temp file
+          file:
+            path: "{{ kube_tmp.path }}"
+            state: absent
