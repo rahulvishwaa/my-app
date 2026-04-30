@@ -88,7 +88,7 @@ jobs:
       - name: Trigger Ansible Tower Job
         id: trigger
         run: |
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+          RESPONSE=$(curl -s  -L -k -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.TOWER_TOKEN }}" \
             -H "Content-Type: application/json" \
             -d "{\"extra_vars\": {\"image_tag\": \"${{ needs.build-and-push.outputs.image_tag }}\"}}" \
