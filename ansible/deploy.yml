@@ -7,6 +7,7 @@
     app_name: "my-app"
     k8s_namespace: "default"
     docker_user: "rahulvishwa"
+    kubeconfig_data: ""
 
   tasks:
     - name: Show which image tag is being deployed
@@ -16,9 +17,14 @@
     - name: Write kubeconfig from base64 variable
       copy:
         content: "{{ kubeconfig_data | b64decode }}"
-        dest: "/tmp/kube_{{ ansible_date_time.epoch }}.config"
+        dest: "/tmp/kubeconfig_deploy"
         mode: "0600"
-      register: kubeconfig_file
+      when: kubeconfig_data != ""
+
+    - name: Set kubeconfig path
+      set_fact:
+        kubeconfig_path: >-
+          {{ '/tmp/kubeconfig_deploy' if kubeconfig_data != '' else lookup('env', 'HOME') + '/.kube/config' }}
 
     - name: Update deployment image
       command: >
@@ -26,7 +32,7 @@
         {{ app_name }}={{ docker_user }}/{{ app_name }}:{{ image_tag }}
         -n {{ k8s_namespace }}
       environment:
-        KUBECONFIG: "{{ kubeconfig_file.dest }}"
+        KUBECONFIG: "{{ kubeconfig_path }}"
       changed_when: true
 
     - name: Wait for rollout to finish
@@ -35,14 +41,14 @@
         -n {{ k8s_namespace }}
         --timeout=120s
       environment:
-        KUBECONFIG: "{{ kubeconfig_file.dest }}"
+        KUBECONFIG: "{{ kubeconfig_path }}"
       changed_when: false
 
     - name: Verify running pods
       command: "kubectl get pods -n {{ k8s_namespace }} -l app={{ app_name }}"
       register: pod_status
       environment:
-        KUBECONFIG: "{{ kubeconfig_file.dest }}"
+        KUBECONFIG: "{{ kubeconfig_path }}"
       changed_when: false
 
     - name: Print pod status
@@ -51,5 +57,6 @@
 
     - name: Cleanup kubeconfig temp file
       file:
-        path: "{{ kubeconfig_file.dest }}"
+        path: /tmp/kubeconfig_deploy
         state: absent
+      when: kubeconfig_data != ""
