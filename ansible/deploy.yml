@@ -13,11 +13,20 @@
       debug:
         msg: "Deploying image: {{ docker_user }}/{{ app_name }}:{{ image_tag }}"
 
+    - name: Write kubeconfig from base64 variable
+      copy:
+        content: "{{ kubeconfig_data | b64decode }}"
+        dest: "/tmp/kube_{{ ansible_date_time.epoch }}.config"
+        mode: "0600"
+      register: kubeconfig_file
+
     - name: Update deployment image
       command: >
         kubectl set image deployment/{{ app_name }}
         {{ app_name }}={{ docker_user }}/{{ app_name }}:{{ image_tag }}
         -n {{ k8s_namespace }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig_file.dest }}"
       changed_when: true
 
     - name: Wait for rollout to finish
@@ -25,13 +34,22 @@
         kubectl rollout status deployment/{{ app_name }}
         -n {{ k8s_namespace }}
         --timeout=120s
+      environment:
+        KUBECONFIG: "{{ kubeconfig_file.dest }}"
       changed_when: false
 
     - name: Verify running pods
       command: "kubectl get pods -n {{ k8s_namespace }} -l app={{ app_name }}"
       register: pod_status
+      environment:
+        KUBECONFIG: "{{ kubeconfig_file.dest }}"
       changed_when: false
 
     - name: Print pod status
       debug:
         msg: "{{ pod_status.stdout_lines }}"
+
+    - name: Cleanup kubeconfig temp file
+      file:
+        path: "{{ kubeconfig_file.dest }}"
+        state: absent
