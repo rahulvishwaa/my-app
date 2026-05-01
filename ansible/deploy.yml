@@ -10,34 +10,6 @@
     kubeconfig_data: ""
 
   tasks:
-    - name: Check who am i
-      command: whoami
-      register: current_user
-      changed_when: false
-
-    - name: Show current user
-      debug:
-        msg: "Running as: {{ current_user.stdout }}"
-
-    - name: Show HOME directory
-      shell: echo $HOME
-      register: home_dir
-      changed_when: false
-
-    - name: Show home
-      debug:
-        msg: "HOME is: {{ home_dir.stdout }}"
-
-    - name: Check if kubeconfig exists
-      command: ls -la ~/.kube/
-      register: kube_dir
-      ignore_errors: true
-      changed_when: false
-
-    - name: Show kube dir
-      debug:
-        msg: "{{ kube_dir.stdout_lines | default(['~/.kube not found']) }}"
-
     - name: Show which image tag is being deployed
       debug:
         msg: "Deploying image: {{ docker_user }}/{{ app_name }}:{{ image_tag }}"
@@ -51,22 +23,8 @@
 
     - name: Set kubeconfig path
       set_fact:
-        kubeconfig_path: "{{ '/tmp/kubeconfig_deploy' if kubeconfig_data != '' else lookup('env', 'HOME') + '/.kube/config' }}"
-
-    - name: Show kubeconfig path being used
-      debug:
-        msg: "Using kubeconfig: {{ kubeconfig_path }}"
-
-    - name: Test kubectl connectivity
-      command: kubectl get nodes
-      environment:
-        KUBECONFIG: "{{ kubeconfig_path }}"
-      register: nodes_out
-      changed_when: false
-
-    - name: Show nodes
-      debug:
-        msg: "{{ nodes_out.stdout_lines }}"
+        kubeconfig_path: >-
+          {{ '/tmp/kubeconfig_deploy' if kubeconfig_data != '' else lookup('env', 'HOME') + '/.kube/config' }}
 
     - name: Update deployment image
       command: >
