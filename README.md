@@ -7,7 +7,7 @@
 
 ## Architecture
 
-![CI/CD Architecture Diagram](cicd_architecture_diagram.svg)
+![CI/CD Architecture Diagram](https://github.com/rahulvishwaa/my-app/blob/main/cicd_architecture_diagram.svg)
 
 *GitHub → GitHub Actions → Docker Hub → Ansible Tower → Kubernetes*
 
